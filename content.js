@@ -1,5 +1,6 @@
 (function () {
   let isRunning = false;
+  let shouldStop = false;
 
   function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
@@ -181,9 +182,109 @@
     });
   }
 
+  async function openProfileAndGetPhone(memberName) {
+    const drawer = document.querySelector('[data-testid="drawer-right"]');
+    if (!drawer) return null;
+
+    const items = drawer.querySelectorAll('[data-testid^="list-item-"]');
+    let targetItem = null;
+    for (const item of items) {
+      const titleEl = item.querySelector('[data-testid="cell-frame-title"]');
+      if (!titleEl) continue;
+      const text = titleEl.textContent?.trim();
+      if (text === memberName) {
+        targetItem = item;
+        break;
+      }
+    }
+    if (!targetItem) return null;
+
+    targetItem.scrollIntoView({ block: 'center' });
+    await sleep(200);
+    targetItem.click();
+    await sleep(1500);
+
+    let phone = null;
+    const profileDrawer = document.querySelector(
+      '[data-testid="drawer-middle"], [data-testid="drawer-fullscreen"]'
+    );
+    if (profileDrawer) {
+      const cells = profileDrawer.querySelectorAll(
+        '[data-testid="cell-frame-secondary"]'
+      );
+      for (const cell of cells) {
+        const text = cell.textContent?.trim() || '';
+        if (text.match(/^\+?\d[\d\s\-()]{6,}/)) {
+          phone = text;
+          break;
+        }
+      }
+      if (!phone) {
+        const allText = profileDrawer.innerText || '';
+        const m = allText.match(/\+\d[\d\s\-()]{6,}/);
+        if (m) phone = m[0];
+      }
+
+      const backBtn = profileDrawer.querySelector(
+        '[data-testid="btn-back"], [aria-label="Back"], [aria-label="Close"]'
+      );
+      if (backBtn) {
+        backBtn.click();
+      } else {
+        document.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
+        );
+      }
+      await sleep(800);
+    }
+    return phone;
+  }
+
+  async function fillMissingPhones(members) {
+    const missing = members.filter(
+      (m) => !m.phone && m.name && m.name !== 'You'
+    );
+    if (missing.length === 0) {
+      updateStatus('All members have phone numbers');
+      return { filled: 0, failed: 0, total: 0 };
+    }
+
+    updateStatus(`Need phones for ${missing.length} saved contacts (clicking each profile)`);
+
+    let filled = 0;
+    let failed = 0;
+    const total = missing.length;
+
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i];
+      if (m.phone || !m.name || m.name === 'You') continue;
+      if (shouldStop) break;
+
+      updateStatus(`(${filled + failed + 1}/${total}) Opening: ${m.name}`);
+      try {
+        const phone = await openProfileAndGetPhone(m.name);
+        if (phone) {
+          m.phone = phone;
+          filled++;
+          updateStatus(`(${filled + failed}/${total}) ${m.name}: ${phone}`);
+        } else {
+          failed++;
+        }
+      } catch (e) {
+        console.error('Error:', e);
+        failed++;
+      }
+      await sleep(300);
+    }
+
+    updateStatus(`Phone fill: ${filled} OK, ${failed} missing`);
+    return { filled, failed, total };
+  }
+
   async function scrape() {
     if (isRunning) return { success: false, error: 'Already running' };
     isRunning = true;
+    shouldStop = false;
 
     try {
       const headerSpan = document.querySelector(
@@ -229,7 +330,17 @@
         return { success: false, error: 'No members found.' };
       }
 
-      updateStatus(`Found ${baseMembers.length} members in "${groupName}"`);
+      if (shouldStop) return { success: false, error: 'Stopped by user' };
+
+      updateStatus(`Found ${baseMembers.length} members in "${groupName}". Now fetching missing phones...`);
+
+      const phoneResult = await fillMissingPhones(baseMembers);
+
+      if (shouldStop) return { success: false, error: 'Stopped by user' };
+
+      updateStatus(
+        `Done! ${baseMembers.length} members, ${phoneResult.filled} phones filled, ${phoneResult.failed} still missing`
+      );
 
       return {
         success: true,
@@ -285,13 +396,16 @@
         <span id="wa-scraper-close" style="cursor:pointer;opacity:0.7;font-size:18px;">&times;</span>
       </div>
       <div id="wa-scraper-status" style="font-size:12px;opacity:0.9;margin-bottom:8px;min-height:18px;">
-        Open a group chat, then click Scrape
+        Open group chat + Group Info panel, then Scrape
       </div>
       <button id="wa-scraper-btn" style="
         width:100%; padding:8px 16px; border:none; border-radius:8px;
         background:#075e54; color:white; font-weight:600;
         cursor:pointer; font-size:13px;
       ">Scrape Members</button>
+      <div style="font-size:10px;opacity:0.7;margin-top:6px;text-align:center;">
+        Press Esc to stop
+      </div>
     `;
 
     Object.assign(widget.style, {
@@ -318,9 +432,11 @@
       const btn = document.getElementById('wa-scraper-btn');
       btn.disabled = true;
       btn.textContent = 'Scraping...';
+      btn.style.background = '#888';
       const result = await scrape();
       btn.disabled = false;
       btn.textContent = 'Scrape Members';
+      btn.style.background = '#075e54';
       if (result.success) {
         const fn = `keshavkajalwa_${result.data.groupName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
         downloadCSV(fn, result.data.members, result.data.groupName);
@@ -329,6 +445,13 @@
         updateStatus('Error: ' + result.error);
       }
     };
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && isRunning) {
+        shouldStop = true;
+        updateStatus('Stopping...');
+      }
+    });
 
     let mx, my;
     widget.addEventListener('mousedown', (e) => {
