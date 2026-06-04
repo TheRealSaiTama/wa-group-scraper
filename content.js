@@ -36,6 +36,19 @@
       const t = raw.trim();
       if (!t) return;
       if (t.toLowerCase() === 'you') return;
+
+      // Filter out truncation labels like "and 64 more", "64 more", "and 5 others", "...", "…"
+      if (
+        /^\d+\s*more$/i.test(t) ||
+        /^and\s+\d+\s*more$/i.test(t) ||
+        /^\d+\s*other/i.test(t) ||
+        /^and\s+\d+\s*other/i.test(t) ||
+        t === '...' ||
+        t === '…'
+      ) {
+        return; // Skip fake entry
+      }
+
       if (seen.has(t)) return;
       seen.add(t);
 
@@ -50,66 +63,101 @@
     return members;
   }
 
-  function enrichFromDrawer(members) {
+  async function scrollAndScrapeDrawer() {
     const drawer = document.querySelector('[data-testid="drawer-right"]');
-    if (!drawer) return;
+    if (!drawer) return [];
 
-    const skipHeaders = [
-      'Groups in common',
-      'Messages',
-      'Media',
-      'Links',
-      'Docs',
-      'Muted',
-      'Starred',
-      'Notifications',
-      'Encryption',
-      'Disappearing',
-    ];
+    const members = [];
+    const seen = new Set();
+    let prevCount = 0;
+    let stalled = 0;
 
-    const items = drawer.querySelectorAll('[data-testid^="list-item-"]');
-    items.forEach((item) => {
-      const cellTitle = item.querySelector('[data-testid="cell-frame-title"]');
-      if (!cellTitle) return;
-      const titleText = cellTitle.textContent?.trim();
-      if (!titleText) return;
-      if (skipHeaders.some((h) => titleText.includes(h))) return;
+    while (stalled < 5) {
+      const items = drawer.querySelectorAll('[data-testid^="list-item-"]');
+      items.forEach((item) => {
+        const cellTitle = item.querySelector('[data-testid="cell-frame-title"]');
+        if (!cellTitle) return;
+        const titleText = cellTitle.textContent?.trim();
+        if (!titleText) return;
 
-      const cellSec = item.querySelector(
-        '[data-testid="cell-frame-secondary"]'
-      );
-      let secText = '';
-      if (cellSec) {
-        secText = (cellSec.textContent || '').trim();
-        if (
-          secText.includes('are also in this group') ||
-          secText.match(/^~\s*$/)
-        )
-          secText = '';
-      }
+        // Skip section headers
+        const skip = [
+          'Groups in common',
+          'Messages',
+          'Media',
+          'Links',
+          'Docs',
+          'Muted',
+          'Starred',
+          'Group settings',
+          'Notifications',
+          'Encryption',
+          'Disappearing',
+        ];
+        if (skip.some((h) => titleText.includes(h))) return;
 
-      let matched = false;
-      for (const m of members) {
-        if (m.name === titleText || m.phone === titleText) {
-          if (secText && !m.description) m.description = secText;
-          if (!m.phone && secText) {
-            const pm = secText.match(/\+?\d[\d\s\-()]{8,}/);
-            if (pm) m.phone = pm[0].trim();
+        if (seen.has(titleText)) return;
+        seen.add(titleText);
+
+        const cellSec = item.querySelector(
+          '[data-testid="cell-frame-secondary"]'
+        );
+        let secText = '';
+        if (cellSec) {
+          secText = cellSec.textContent?.trim() || '';
+          if (
+            secText.includes('are also in this group') ||
+            secText.match(/^~\s*$/)
+          ) {
+            secText = '';
           }
-          matched = true;
-          break;
         }
-      }
 
-      if (!matched && titleText.startsWith('+')) {
-        const existing = members.find((m) => m.phone === titleText);
-        if (!existing) {
-          members.push({
-            name: '',
-            phone: titleText,
-            description: secText,
-          });
+        const isPhone = titleText.startsWith('+');
+        members.push({
+          name: isPhone ? '' : titleText,
+          phone: isPhone ? titleText : '',
+          description: secText,
+        });
+      });
+
+      if (members.length === prevCount) {
+        stalled++;
+      } else {
+        stalled = 0;
+      }
+      prevCount = members.length;
+
+      // Scroll all scrollable elements inside the drawer
+      const scrollables = drawer.querySelectorAll('div');
+      scrollables.forEach((el) => {
+        if (el.scrollHeight > el.clientHeight) {
+          el.scrollTop = el.scrollTop + 500;
         }
+      });
+      drawer.scrollTop = drawer.scrollTop + 500;
+      
+      updateStatus(`Scrolling to load more... (Found ${members.length})`);
+      await sleep(800);
+    }
+
+    return members;
+  }
+
+  function mergeMemberLists(base, drawerMembers) {
+    drawerMembers.forEach((dm) => {
+      let match = base.find(
+        (bm) =>
+          (bm.phone && dm.phone && bm.phone.replace(/[\s\-]/g, '') === dm.phone.replace(/[\s\-]/g, '')) ||
+          (bm.name && dm.name && bm.name.toLowerCase() === dm.name.toLowerCase())
+      );
+
+      if (match) {
+        if (dm.name && !match.name) match.name = dm.name;
+        if (dm.phone && !match.phone) match.phone = dm.phone;
+        if (dm.description && !match.description) match.description = dm.description;
+      } else {
+        base.push(dm);
       }
     });
   }
@@ -134,23 +182,40 @@
         return { success: false, error: 'Could not read member data.' };
       }
 
+      const lastEntry = titleStr.split(', ').pop().trim();
+      const isTruncated =
+        /^\d+\s*more$/i.test(lastEntry) ||
+        /^and\s+\d+\s*more$/i.test(lastEntry) ||
+        /^\d+\s*other/i.test(lastEntry) ||
+        /^and\s+\d+\s*other/i.test(lastEntry);
+
       updateStatus('Parsing members...');
       const groupName = getGroupName();
-      const members = parseMembersFromTitle(titleStr);
+      const baseMembers = parseMembersFromTitle(titleStr);
 
-      if (members.length === 0) {
+      const drawer = document.querySelector('[data-testid="drawer-right"]');
+      if (drawer) {
+        updateStatus('Opening panel & auto-scrolling to get complete list...');
+        const drawerMembers = await scrollAndScrapeDrawer();
+        mergeMemberLists(baseMembers, drawerMembers);
+      } else if (isTruncated) {
+        updateStatus('Warning: Title truncated! Open Group Info panel first.');
+        return {
+          success: false,
+          error: 'Large group detected! WhatsApp truncates this list. To get ALL members, please click the group name at the top to open the Group Info panel, then click Scrape again.',
+        };
+      }
+
+      if (baseMembers.length === 0) {
         return { success: false, error: 'No members found.' };
       }
 
-      updateStatus('Enriching from panel...');
-      enrichFromDrawer(members);
-
-      updateStatus(`Found ${members.length} members in "${groupName}"`);
+      updateStatus(`Found ${baseMembers.length} members in "${groupName}"`);
 
       return {
         success: true,
-        data: { groupName, members },
-        count: members.length,
+        data: { groupName, members: baseMembers },
+        count: baseMembers.length,
       };
     } catch (e) {
       return { success: false, error: e.message };
