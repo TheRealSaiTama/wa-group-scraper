@@ -114,10 +114,29 @@
         }
 
         const isPhone = titleText.startsWith('+');
+        let name = isPhone ? '' : titleText;
+        let phone = isPhone ? titleText : '';
+        let description = secText;
+
+        // Extra phone extraction from description (e.g. for "You" which contains "Add member tag+phone")
+        if (!phone && description) {
+          const pm = description.match(/\+?\d[\d\s\-()]{8,}/);
+          if (pm) {
+            phone = pm[0].trim();
+            if (description.includes('Add member tag')) {
+              description = '';
+            }
+          }
+        }
+
+        if (name.toLowerCase() === 'you') {
+          name = 'You';
+        }
+
         members.push({
-          name: isPhone ? '' : titleText,
-          phone: isPhone ? titleText : '',
-          description: secText,
+          name,
+          phone,
+          description,
         });
       });
 
