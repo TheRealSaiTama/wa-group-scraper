@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "WA Group Scraper",
+  "name": "YOYOWS",
   "version": "1.0",
-  "description": "Scrape WhatsApp group members and export to XLSX",
+  "description": "YOYOWS - Export WhatsApp group members to Excel",
   "permissions": ["activeTab", "scripting", "downloads"],
   "host_permissions": ["https://web.whatsapp.com/*"],
   "icons": {
@@ -12,7 +12,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "WA Group Scraper",
+    "default_title": "YOYOWS",
     "default_icon": {
       "16": "icon16.png",
       "48": "icon48.png",

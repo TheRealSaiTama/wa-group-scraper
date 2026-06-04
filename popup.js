@@ -52,7 +52,7 @@ function downloadXLSX(data) {
     { wch: 30 },
   ];
   XLSX.utils.book_append_sheet(wb, ws, 'Members');
-  const filename = `WA_Group_${data.groupName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+  const filename = `keshavkajalwa_${data.groupName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.xlsx`;
   XLSX.writeFile(wb, filename);
 }
 

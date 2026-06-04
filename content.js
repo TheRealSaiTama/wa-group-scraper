@@ -197,7 +197,7 @@
     widget.id = 'wa-scraper-widget';
     widget.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-        <strong style="font-size:15px;">WA Scraper</strong>
+        <strong style="font-size:15px;">YOYOWS</strong>
         <span id="wa-scraper-close" style="cursor:pointer;opacity:0.7;font-size:18px;">&times;</span>
       </div>
       <div id="wa-scraper-status" style="font-size:12px;opacity:0.9;margin-bottom:8px;min-height:18px;">
@@ -238,7 +238,7 @@
       btn.disabled = false;
       btn.textContent = 'Scrape Members';
       if (result.success) {
-        const fn = `WA_${result.data.groupName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
+        const fn = `keshavkajalwa_${result.data.groupName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().slice(0, 10)}.csv`;
         downloadCSV(fn, result.data.members, result.data.groupName);
         updateStatus(`Done! ${result.count} members → ${fn}`);
       } else {
